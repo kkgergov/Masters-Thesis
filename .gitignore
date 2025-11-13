@@ -1,1 +1,3 @@
-graphs/
+data/
+./venv/
+__pycache__/

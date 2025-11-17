@@ -4,6 +4,7 @@ import numpy as np
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
 from qiskit_aer.noise import NoiseModel, depolarizing_error
+from qiskit.quantum_info import Statevector
 
 # Misc utils
 from itertools import product
@@ -32,6 +33,24 @@ def calculate_hamming_distance(noisy_counts, true_output, total_shots):
         total_distance += distance * count
     
     return total_distance / total_shots
+
+def get_ideal_dist(qc: QuantumCircuit):
+    # Use the statevector simulator to get the ideal statevector
+    simulator = AerSimulator(method='statevector')
+    compiled_circuit = transpile(qc, simulator)
+    statevector = Statevector(compiled_circuit)
+
+    # Calculate probabilities from the statevector
+    probabilities = np.abs(statevector)**2
+
+    # Generate basis state labels (e.g., '00', '01', '10', '11')
+    num_qubits = qc.num_qubits
+    basis_states = [format(i, '0'+str(num_qubits)+'b') for i in range(2**num_qubits)]
+
+    # Create the dictionary: {basis_state: probability}
+    ideal_distribution = dict(zip(basis_states, probabilities))
+
+    return ideal_distribution
 
 def calculate_hellinger_distance(noisy_counts, ideal_dist, total_shots, n_qubits):
     """
@@ -104,7 +123,7 @@ def simulate_with_noise_3D(circuit, ideal_output, noise_levels = np.linspace(0, 
     """
     Simulate noisy circuit and compute average Hamming distance vs shots vs noise level
     1. circuit: list of [QuantumCircuit, num_qubits]
-    2. ideal_output: expected ideal output string for the circuit
+    2. ideal_output: expected ideal output of the circuit (either distribution or a basis state)
     3. noise_levels: list of noise levels to simulate, default: 100 levels from [0, 0.3]
     4. shot_counts: list of shot counts to simulate, default: 100 counts from [100, 10000]
     5. distance_type: type of distance metric to use (e.g., 'hamming')
@@ -199,6 +218,9 @@ class DistanceVisualizer:
 
         # Display chosen Hamming run 
         ax.plot(self.shots_array, hamming_slice, color='b')
+
+        # Display Hellinger std
+        ax.plot(self.shots_array, std_slice, color='y')
 
         # Display y up to theoretical max Hamming distance
         ax.set_ylim(0, self.theoretical_max_Hamming + 0.1)

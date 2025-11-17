@@ -31,75 +31,28 @@ def basic_hellinger():
 
     return circuits, true_dists
 
-def hellinger_circuits():
+# # Example usage and visualization
+# if __name__ == "__main__":
+#     # Single simulation example
+#     circuit_index = 2
 
-    circuits = []
-    true_dists = []
+#     circuits, true_outputs = hellinger_circuits()
+#     circuit, true_output = circuits[circuit_index], true_outputs[circuit_index]
 
-    """Circuit 0: Three qubits with single H gate"""
-    qc = QuantumCircuit(3, 3)
-    qc.h(0)
-    qc.h(1)
-    qc.h(2)
-    qc.measure([0, 1, 2], [0, 1, 2])
-    circuits.append(qc)
-    true_dists.append({
-        '000': 1/8,
-        '111': 1/8,
-        '001': 1/8,
-        '110': 1/8,
-        '010': 1/8,
-        '101': 1/8,
-        '011': 1/8,
-        '100': 1/8
-    })
+#     noise_levels = np.linspace(0, 0.2, 21)
 
-    """Circuit 1: 3 qubit QFT on |101>"""
-    qc = QuantumCircuit(3, 3)
-    qft = QFTGate(3)
-    iqft = qft.inverse()
-    qc.initialize([0, 1, 0, 0, 0, 0, 0, 0], [0, 1, 2])
-    qc.append(qft, [0, 1, 2])
-    qc.measure([0, 1, 2], [0, 1, 2])
+#     # Create ranges for each segment
+#     ranges = [
+#         np.arange(10, 250, 10),      # Usually big std reduction occurs here so we want to most precision
+#         np.arange(250, 1000, 50),   # Here it slowly starts to converge
+#         np.arange(1000, 2000, 100), # Usually completely converges in this range
+#         np.arange(2000, 10001, 500)
+#     ]
+#     shot_counts = np.concatenate(ranges)
 
-    print(qc.draw())
+#     H = simulate_with_noise_3D(
+#         circuit, true_output, noise_levels=noise_levels, shot_counts=shot_counts, distance_type='hellinger'
+#     )
 
-    circuits.append(qc)
-    true_dists.append({
-        '000': 1/8,
-        '001': 1/8,
-        '010': 1/8,
-        '011': 1/8,
-        '100': 1/8,
-        '101': 1/8,
-        '110': 1/8,
-        '111': 1/8
-    })
-
-    return circuits, true_dists
-
-# Example usage and visualization
-if __name__ == "__main__":
-    # Single simulation example
-    circuit_index = 2
-
-    circuits, true_outputs = hellinger_circuits()
-    circuit, true_output = circuits[circuit_index], true_outputs[circuit_index]
-
-    noise_levels = np.linspace(0, 0.2, 21)
-
-    # Create ranges for each segment
-    ranges = [
-        np.arange(10, 250, 10),      # Usually big std reduction occurs here so we want to most precision
-        np.arange(250, 1000, 50),   # Here it slowly starts to converge
-        np.arange(1000, 2000, 100), # Usually completely converges in this range
-        np.arange(2000, 10001, 500)
-    ]
-    shot_counts = np.concatenate(ranges)
-
-    H = simulate_with_noise_3D(
-        circuit, true_output, noise_levels=noise_levels, shot_counts=shot_counts, distance_type='hellinger'
-    )
-
-    # Visualization
-    plot_3d(H, noise_levels, shot_counts)
+#     # Visualization
+#     plot_3d(H, noise_levels, shot_counts)

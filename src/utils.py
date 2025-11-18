@@ -225,17 +225,35 @@ class DistanceVisualizer:
         # Display y up to theoretical max Hamming distance
         ax.set_ylim(0, self.theoretical_max_Hamming + 0.1)
 
-        # Customize plot
+        # Plot legend: Hellinger is red, Hamming is blue, std is yellow
+        ax.plot([], [], color='r', label='Hellinger Distance')
+        ax.plot([], [], color='b', label='Hamming Distance')
+        ax.plot([], [], color='y', label='Std Dev')
+        ax.legend()
+
+        # Labels and title
         ax.set_xlabel('Number of Shots', fontsize=12)
-        ax.set_ylabel('Hamming Distance', fontsize=12)
         actual_noise = self.noise_intensities[noise_index]
-        ax.set_title(f'Hamming Distance vs Number of Shots\nNoise Intensity: {actual_noise:.4f}', fontsize=14)
+        ax.set_title(f'Different metrics vs Number of Shots\nNoise Intensity: {actual_noise:.4f}', fontsize=14)
         ax.grid(True, alpha=0.3)
 
         # Plot theoretical max Hamming distance
         ax.axhline(y=self.theoretical_max_Hamming, color='r', linestyle='--', label='Theoretical Max Hamming Distance')
         ax.legend()
-        
+
+        # Seperate plot for correlation between Hamming std and Hellinger distance points
+        fig2, ax2 = plt.subplots(figsize=(8, 6))
+        ax2.scatter(std_slice, hellinger_slice, color='b', label='Hellinger Distance')
+        ax2.set_xlabel('Hamming Distance Std Dev', fontsize=12)
+        ax2.set_ylabel('Hellinger Distance', fontsize=12)
+        ax2.set_title('Correlation between Hamming Std Dev and Hellinger Distance', fontsize=14)
+        ax2.grid(True, alpha=0.3)
+
+        # Plot regression curve
+        p = np.poly1d(np.polyfit(std_slice, hellinger_slice, 2))
+        ax2.plot(std_slice, p(std_slice), color='r', label='Regression curve')
+        ax2.legend()
+
         plt.tight_layout()
         plt.show()
         

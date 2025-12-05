@@ -12,6 +12,7 @@ from functools import partial
 
 # Visualization
 import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
 from ipywidgets import interact, FloatSlider, Checkbox, Dropdown
 
 def calculate_hamming_distance(noisy_counts, true_output, total_shots):
@@ -33,24 +34,6 @@ def calculate_hamming_distance(noisy_counts, true_output, total_shots):
         total_distance += distance * count
     
     return total_distance / total_shots
-
-def get_ideal_dist(qc: QuantumCircuit):
-    # Use the statevector simulator to get the ideal statevector
-    simulator = AerSimulator(method='statevector')
-    compiled_circuit = transpile(qc, simulator)
-    statevector = Statevector(compiled_circuit)
-
-    # Calculate probabilities from the statevector
-    probabilities = np.abs(statevector)**2
-
-    # Generate basis state labels (e.g., '00', '01', '10', '11')
-    num_qubits = qc.num_qubits
-    basis_states = [format(i, '0'+str(num_qubits)+'b') for i in range(2**num_qubits)]
-
-    # Create the dictionary: {basis_state: probability}
-    ideal_distribution = dict(zip(basis_states, probabilities))
-
-    return ideal_distribution
 
 def calculate_hellinger_distance(noisy_counts, ideal_dist, total_shots, n_qubits):
     """
@@ -76,6 +59,24 @@ def calculate_hellinger_distance(noisy_counts, ideal_dist, total_shots, n_qubits
     q = np.array([ideal_dist.get(state, 0.0) for state in all_states])
 
     return np.sqrt(1 - np.sum(np.sqrt(p * q)))
+
+def get_ideal_dist(qc: QuantumCircuit):
+    # Use the statevector simulator to get the ideal statevector
+    simulator = AerSimulator(method='statevector')
+    compiled_circuit = transpile(qc, simulator)
+    statevector = Statevector(compiled_circuit)
+
+    # Calculate probabilities from the statevector
+    probabilities = np.abs(statevector)**2
+
+    # Generate basis state labels (e.g., '00', '01', '10', '11')
+    num_qubits = qc.num_qubits
+    basis_states = [format(i, '0'+str(num_qubits)+'b') for i in range(2**num_qubits)]
+
+    # Create the dictionary: {basis_state: probability}
+    ideal_distribution = dict(zip(basis_states, probabilities))
+
+    return ideal_distribution
 
 def create_noise_model(gate_error=0.01, measurement_error=0.01):
     """
@@ -184,9 +185,10 @@ def plot_3d(distance_data, noise_levels, shot_counts):
     plt.show()
 
 class DistanceVisualizer:
-    def __init__(self, shots_array, noise_intensities, hamming_data, hellinger_data, n_qubits):
+    def __init__(self, shots_array, noise_intensities, circuit_name, hamming_data, hellinger_data, n_qubits):
         self.shots_array = shots_array
         self.noise_intensities = noise_intensities
+        self.circuit_name = circuit_name
         self.theoretical_max_Hamming = n_qubits / 2
 
         # Hamming data is of the format (experiments, noise_levels, shot_counts)
@@ -199,60 +201,64 @@ class DistanceVisualizer:
         self.mean_hamming = np.mean(self.hamming_data, axis=0)
         self.std_hamming = np.std(self.hamming_data, axis=0)
 
-    def plot_interactive(self, run_index, noise_index):
+    def plot_interactive(self, noise_index):
         hellinger_slice = self.hellinger_data[noise_index, :]
-        hamming_slice = self.hamming_data[run_index, noise_index, :]
-        mean_slice = self.mean_hamming[noise_index, :]
-        std_slice = self.std_hamming[noise_index, :]
+        hamming_mean_slice = self.mean_hamming[noise_index, :]
+        hamming_std_slice = self.std_hamming[noise_index, :]
 
         fig, ax = plt.subplots(figsize=(12, 7))
 
         # Display std centered around mean
         ax.fill_between(self.shots_array, 
-                        mean_slice - std_slice, 
-                        mean_slice + std_slice, 
+                        hamming_mean_slice - hamming_std_slice, 
+                        hamming_mean_slice + hamming_std_slice, 
                         color='gray', alpha=0.3, label='Mean ± Std Dev')
 
+        # Smooth the Hellinger, Hamming, Std curves using Savitzky-Golay filter
+        hellinger_slice_smooth = savgol_filter(hellinger_slice, 11, 3)
+        hamming_slice_smooth = savgol_filter(hamming_mean_slice, 11, 3)
+        std_slice_smooth = savgol_filter(hamming_std_slice, 11, 3)
+
         # Display Hellinger distance
-        ax.plot(self.shots_array, hellinger_slice, color='r')
+        ax.plot(self.shots_array, hellinger_slice_smooth, color='r')
 
         # Display chosen Hamming run 
-        ax.plot(self.shots_array, hamming_slice, color='b')
+        ax.plot(self.shots_array, hamming_slice_smooth, color='b')
 
         # Display Hellinger std
-        ax.plot(self.shots_array, std_slice, color='y')
+        ax.plot(self.shots_array, std_slice_smooth, color='y')
 
         # Display y up to theoretical max Hamming distance
         ax.set_ylim(0, self.theoretical_max_Hamming + 0.1)
 
         # Plot legend: Hellinger is red, Hamming is blue, std is yellow
         ax.plot([], [], color='r', label='Hellinger Distance')
-        ax.plot([], [], color='b', label='Hamming Distance')
+        ax.plot([], [], color='b', label='Hamming mean Distance')
         ax.plot([], [], color='y', label='Std Dev')
         ax.legend()
 
         # Labels and title
         ax.set_xlabel('Number of Shots', fontsize=12)
         actual_noise = self.noise_intensities[noise_index]
-        ax.set_title(f'Different metrics vs Number of Shots\nNoise Intensity: {actual_noise:.4f}', fontsize=14)
+        ax.set_title(f'{self.circuit_name}\nNoise Intensity: {actual_noise:.4f}', fontsize=14)
         ax.grid(True, alpha=0.3)
 
         # Plot theoretical max Hamming distance
         ax.axhline(y=self.theoretical_max_Hamming, color='r', linestyle='--', label='Theoretical Max Hamming Distance')
         ax.legend()
 
-        # Seperate plot for correlation between Hamming std and Hellinger distance points
-        fig2, ax2 = plt.subplots(figsize=(8, 6))
-        ax2.scatter(std_slice, hellinger_slice, color='b', label='Hellinger Distance')
-        ax2.set_xlabel('Hamming Distance Std Dev', fontsize=12)
-        ax2.set_ylabel('Hellinger Distance', fontsize=12)
-        ax2.set_title('Correlation between Hamming Std Dev and Hellinger Distance', fontsize=14)
-        ax2.grid(True, alpha=0.3)
+        # # Seperate plot for correlation between Hamming std and Hellinger distance points
+        # fig2, ax2 = plt.subplots(figsize=(8, 6))
+        # ax2.scatter(std_slice, hellinger_slice, color='b', label='Hellinger Distance')
+        # ax2.set_xlabel('Hamming Distance Std Dev', fontsize=12)
+        # ax2.set_ylabel('Hellinger Distance', fontsize=12)
+        # ax2.set_title('Correlation between Hamming Std Dev and Hellinger Distance', fontsize=14)
+        # ax2.grid(True, alpha=0.3)
 
-        # Plot regression curve
-        p = np.poly1d(np.polyfit(std_slice, hellinger_slice, 2))
-        ax2.plot(std_slice, p(std_slice), color='r', label='Regression curve')
-        ax2.legend()
+        # # Plot regression curve
+        # p = np.poly1d(np.polyfit(std_slice, hellinger_slice, 2))
+        # ax2.plot(std_slice, p(std_slice), color='r', label='Regression curve')
+        # ax2.legend()
 
         plt.tight_layout()
         plt.show()
@@ -268,12 +274,7 @@ class DistanceVisualizer:
                 value=np.median(self.noise_intensities),
                 description='Noise Intensity:',
                 continuous_update=True
-            ),
-            run_index=Dropdown(
-                options=[(f'Experiment {i}', i) for i in range(self.hamming_data.shape[0])],
-                value=0,
-                description='Run:'
             )
         ):
             noise_idx = np.argmin(np.abs(self.noise_intensities - noise_intensity))
-            self.plot_interactive(run_index, noise_idx)
+            self.plot_interactive(noise_idx)

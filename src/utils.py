@@ -12,6 +12,7 @@ from functools import partial
 
 # Visualization
 import matplotlib.pyplot as plt
+import ruptures as rpt
 from scipy.signal import savgol_filter
 from ipywidgets import interact, FloatSlider, Checkbox, Dropdown
 
@@ -247,23 +248,10 @@ class DistanceVisualizer:
         ax.axhline(y=self.theoretical_max_Hamming, color='r', linestyle='--', label='Theoretical Max Hamming Distance')
         ax.legend()
 
-        # # Seperate plot for correlation between Hamming std and Hellinger distance points
-        # fig2, ax2 = plt.subplots(figsize=(8, 6))
-        # ax2.scatter(std_slice, hellinger_slice, color='b', label='Hellinger Distance')
-        # ax2.set_xlabel('Hamming Distance Std Dev', fontsize=12)
-        # ax2.set_ylabel('Hellinger Distance', fontsize=12)
-        # ax2.set_title('Correlation between Hamming Std Dev and Hellinger Distance', fontsize=14)
-        # ax2.grid(True, alpha=0.3)
-
-        # # Plot regression curve
-        # p = np.poly1d(np.polyfit(std_slice, hellinger_slice, 2))
-        # ax2.plot(std_slice, p(std_slice), color='r', label='Regression curve')
-        # ax2.legend()
-
         plt.tight_layout()
         plt.show()
         
-    def create_dashboard(self):
+    def create_dashboard(self, init_value=None):
         """Create a comprehensive interactive dashboard"""
         @interact
         def dashboard(
@@ -271,10 +259,117 @@ class DistanceVisualizer:
                 min=min(self.noise_intensities),
                 max=max(self.noise_intensities),
                 step=(max(self.noise_intensities)-min(self.noise_intensities))/len(self.noise_intensities),
-                value=np.median(self.noise_intensities),
+                value=init_value if init_value is not None else np.median(self.noise_intensities),
                 description='Noise Intensity:',
                 continuous_update=True
             )
         ):
             noise_idx = np.argmin(np.abs(self.noise_intensities - noise_intensity))
             self.plot_interactive(noise_idx)
+
+class TransitionPointsVisualizer:
+    def __init__(self, names_dataset, shots_dataset, noise_dataset, hamming_dataset, hellinger_dataset, n_qubits):
+        self.circuit_names = names_dataset
+        self.shots_dataset = shots_dataset
+        self.noise_dataset = noise_dataset
+        self.hamming_dataset = hamming_dataset
+        self.hellinger_dataset = hellinger_dataset
+        self.n_qubits = n_qubits
+
+        # Precompute mean and std for each circuit in the Hamming dataset
+        self.mean_hamming = [np.mean(hamming_data, axis=0) for hamming_data in hamming_dataset]
+        self.std_hamming = [np.std(hamming_data, axis=0) for hamming_data in hamming_dataset]
+
+        # Precompute smoothed Hellinger, Hamming mean and Hamming std for each circuit and each noise level
+        self.smoothed_hellinger = [savgol_filter(hellinger_data, 11, 3) for hellinger_data in self.hellinger_dataset]
+        self.smoothed_hamming_mean = [savgol_filter(mean_data, 11, 3) for mean_data in self.mean_hamming]
+        self.smoothed_hamming_std = [savgol_filter(std_data, 11, 3) for std_data in self.std_hamming]
+
+        # self.hamming_transition_points = self.compute_transition_points(self.hamming_dataset, metric='hamming')
+        # self.hellinger_transition_points = self.compute_transition_points(self.hellinger_dataset, metric='hellinger')
+
+    def plot_hellinger(self, noise_index):
+        fig, ax = plt.subplots(figsize=(12, 8))
+        for i, circuit_name in enumerate(self.circuit_names):
+            hellinger_slice = self.smoothed_hellinger[i][noise_index, :]
+            ax.plot(self.shots_dataset[i], hellinger_slice, label=circuit_name)
+            ax.text(self.shots_dataset[i][-1], hellinger_slice[-1], f'  {i}', verticalalignment='center')
+        ax.set_ylim(0, 1)
+
+    def plot_transition_points(self, circuit_index = 0, noise_index = 0):
+        fig, ax = plt.subplots(figsize=(12, 8))
+        hellinger_slice = self.smoothed_hellinger[circuit_index][noise_index, :]
+        std_slice = self.smoothed_hamming_std[circuit_index][noise_index, :]
+        shots_slice = self.shots_dataset[circuit_index]
+
+        transition_hellinger_idx = detect_change_point(hellinger_slice, shots_slice)
+        # Skip calculating transition point for hamming when the noise is zero
+        if self.noise_dataset[circuit_index][noise_index] == 0:
+            transition_hamming_std_idx = 0
+        else:
+            transition_hamming_std_idx = detect_change_point(std_slice, shots_slice)
+
+        ax.plot(shots_slice, hellinger_slice, color='r', label='Hellinger Distance')
+        ax.plot(shots_slice, std_slice, color='y', label='Hamming Std Dev')
+
+        ax.axvline(shots_slice[transition_hellinger_idx], color='r', linestyle='--', 
+                label=f'Elbow at n={shots_slice[transition_hellinger_idx]:.0f}')
+        ax.axvline(shots_slice[transition_hamming_std_idx], color='y', linestyle='--', 
+                label=f'Elbow at n={shots_slice[transition_hamming_std_idx]:.0f}')
+
+        ax.set_ylim(0, 1)
+
+    def hellinger_dashboard(self, noise_init=0):
+        @interact
+        def dashboard(
+            noise_idx=FloatSlider(
+                min=0,
+                max=20,
+                step=1,
+                value=noise_init,
+                description='Noise Intensity:',
+                continuous_update=True
+            )
+        ):
+            self.plot_hellinger(int(noise_idx))
+
+    def transition_points_dashboard(self, circuit_init=0, noise_init=0):
+        @interact
+        def dashboard(
+            circuit_idx=Dropdown(
+                options=[(name, idx) for idx, name in enumerate(self.circuit_names)],
+                value=circuit_init,
+                description='Circuit:',
+            ),
+            noise_idx=FloatSlider(
+                min=0,
+                max=20,
+                step=1,
+                value=noise_init,
+                description='Noise Intensity:',
+                continuous_update=True
+            )
+        ):
+            self.plot_transition_points(int(circuit_idx), int(noise_idx))
+
+def detect_change_point(h_distances, n_samples, method='window'):
+    # Use log-transformed data for better stability
+    signal = np.log(h_distances)
+    
+    # Choose algorithm based on method
+    if method == 'pelt':
+        algo = rpt.Pelt(model="l2").fit(signal)
+        change_points = algo.predict(pen=10)  # penalty parameter
+    elif method == 'binseg':
+        algo = rpt.Binseg(model="l2").fit(signal)
+        change_points = algo.predict(n_bkps=1)  # look for 1 change point
+    elif method == 'window':
+        algo = rpt.Window(width=40, model="l2").fit(signal)
+        change_points = algo.predict(n_bkps=1)
+    else:  # 'amoc'
+        algo = rpt.KernelCPD(kernel="linear").fit(signal)
+        change_points = algo.predict(n_bkps=1)
+    
+    # Get the first (most significant) change point
+    cp_idx = change_points[0] - 1  # Convert to 0-index
+    return cp_idx

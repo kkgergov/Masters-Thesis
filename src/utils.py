@@ -296,18 +296,18 @@ class TransitionPointsVisualizer:
             ax.text(self.shots_dataset[i][-1], hellinger_slice[-1], f'  {i}', verticalalignment='center')
         ax.set_ylim(0, 1)
 
-    def plot_transition_points(self, circuit_index = 0, noise_index = 0):
+    def plot_transition_points(self, circuit_index = 0, noise_index = 0, method='window'):
         fig, ax = plt.subplots(figsize=(12, 8))
         hellinger_slice = self.smoothed_hellinger[circuit_index][noise_index, :]
         std_slice = self.smoothed_hamming_std[circuit_index][noise_index, :]
         shots_slice = self.shots_dataset[circuit_index]
 
-        transition_hellinger_idx = detect_change_point(hellinger_slice, shots_slice)
+        transition_hellinger_idx = detect_change_point(hellinger_slice, shots_slice, method=method)
         # Skip calculating transition point for hamming when the noise is zero
         if self.noise_dataset[circuit_index][noise_index] == 0:
             transition_hamming_std_idx = 0
         else:
-            transition_hamming_std_idx = detect_change_point(std_slice, shots_slice)
+            transition_hamming_std_idx = detect_change_point(std_slice, shots_slice, method=method)
 
         ax.plot(shots_slice, hellinger_slice, color='r', label='Hellinger Distance')
         ax.plot(shots_slice, std_slice, color='y', label='Hamming Std Dev')
@@ -333,7 +333,7 @@ class TransitionPointsVisualizer:
         ):
             self.plot_hellinger(int(noise_idx))
 
-    def transition_points_dashboard(self, circuit_init=0, noise_init=0):
+    def transition_points_dashboard(self, circuit_init=0, noise_init=0, method='window'):
         @interact
         def dashboard(
             circuit_idx=Dropdown(
@@ -350,7 +350,7 @@ class TransitionPointsVisualizer:
                 continuous_update=True
             )
         ):
-            self.plot_transition_points(int(circuit_idx), int(noise_idx))
+            self.plot_transition_points(int(circuit_idx), int(noise_idx), method=method)
 
 def detect_change_point(h_distances, n_samples, method='window'):
     # Use log-transformed data for better stability
@@ -364,10 +364,10 @@ def detect_change_point(h_distances, n_samples, method='window'):
         algo = rpt.Binseg(model="l2").fit(signal)
         change_points = algo.predict(n_bkps=1)  # look for 1 change point
     elif method == 'window':
-        algo = rpt.Window(width=40, model="l2").fit(signal)
+        algo = rpt.Window(width=8, model="l2").fit(signal)
         change_points = algo.predict(n_bkps=1)
     else:  # 'amoc'
-        algo = rpt.KernelCPD(kernel="linear").fit(signal)
+        algo = rpt.KernelCPD(kernel="rbf").fit(signal) #rbf or linear options
         change_points = algo.predict(n_bkps=1)
     
     # Get the first (most significant) change point

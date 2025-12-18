@@ -14,6 +14,7 @@ from functools import partial
 import matplotlib.pyplot as plt
 import ruptures as rpt
 from scipy.signal import savgol_filter
+from scipy.optimize import curve_fit
 from ipywidgets import interact, FloatSlider, Checkbox, Dropdown
 
 def calculate_hamming_distance(noisy_counts, true_output, total_shots):
@@ -273,20 +274,38 @@ class TransitionPointsVisualizer:
         self.shots_dataset = shots_dataset
         self.noise_dataset = noise_dataset
         self.hamming_dataset = hamming_dataset
-        self.hellinger_dataset = hellinger_dataset
+        self.hellinger = hellinger_dataset
         self.n_qubits = n_qubits
+
+        self.theoretical_max_Hamming = n_qubits / 2
 
         # Precompute mean and std for each circuit in the Hamming dataset
         self.mean_hamming = [np.mean(hamming_data, axis=0) for hamming_data in hamming_dataset]
         self.std_hamming = [np.std(hamming_data, axis=0) for hamming_data in hamming_dataset]
 
-        # Precompute smoothed Hellinger, Hamming mean and Hamming std for each circuit and each noise level
-        self.smoothed_hellinger = [savgol_filter(hellinger_data, 11, 3) for hellinger_data in self.hellinger_dataset]
-        self.smoothed_hamming_mean = [savgol_filter(mean_data, 11, 3) for mean_data in self.mean_hamming]
-        self.smoothed_hamming_std = [savgol_filter(std_data, 11, 3) for std_data in self.std_hamming]
+        # Precompute constants to fit Exponential Decay (24, 21, 3)
+        self.poly_hellinger_ABC = np.array([
+            [fit_exponential_decay_to_data(self.shots_dataset[i], self.hellinger[i][noise_idx, :]) 
+             for noise_idx in range(self.hellinger[i].shape[0])]
+            for i in range(len(self.circuit_names))
+        ])
+        self.poly_hamming_std_ABC = np.array([
+            [fit_exponential_decay_to_data(self.shots_dataset[i], self.std_hamming[i][noise_idx, :]) 
+             for noise_idx in range(self.std_hamming[i].shape[0])]
+            for i in range(len(self.circuit_names))
+        ])
 
-        # self.hamming_transition_points = self.compute_transition_points(self.hamming_dataset, metric='hamming')
-        # self.hellinger_transition_points = self.compute_transition_points(self.hellinger_dataset, metric='hellinger')
+        # Precompute constants to fit Exponential Decay (24, 21, 81)
+        self.poly_hellinger = np.array([
+            [exp_decay(self.shots_dataset[i], *self.poly_hellinger_ABC[i][noise_idx]) 
+             for noise_idx in range(self.hellinger[i].shape[0])]
+            for i in range(len(self.circuit_names))
+        ])
+        self.poly_hamming_std = np.array([
+            [exp_decay(self.shots_dataset[i], *self.poly_hamming_std_ABC[i][noise_idx]) 
+             for noise_idx in range(self.std_hamming[i].shape[0])]
+            for i in range(len(self.circuit_names))
+        ])
 
     def plot_hellinger(self, noise_index):
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -296,28 +315,42 @@ class TransitionPointsVisualizer:
             ax.text(self.shots_dataset[i][-1], hellinger_slice[-1], f'  {i}', verticalalignment='center')
         ax.set_ylim(0, 1)
 
-    def plot_transition_points(self, circuit_index = 0, noise_index = 0, method='window'):
-        fig, ax = plt.subplots(figsize=(12, 8))
-        hellinger_slice = self.smoothed_hellinger[circuit_index][noise_index, :]
-        std_slice = self.smoothed_hamming_std[circuit_index][noise_index, :]
+    def plot_transition_points(self, circuit_index = 0, noise_index = 0, display_mean=True, tolerance=0.01):
         shots_slice = self.shots_dataset[circuit_index]
+        hellinger_slice = self.hellinger[circuit_index][noise_index, :]
+        hellinger_poly_slice = self.poly_hellinger[circuit_index][noise_index, :]
+        mean_slice = self.mean_hamming[circuit_index][noise_index, :]
+        std_slice = self.std_hamming[circuit_index][noise_index, :]
+        std_poly_slice = self.poly_hamming_std[circuit_index][noise_index, :]
 
-        transition_hellinger_idx = detect_change_point(hellinger_slice, shots_slice, method=method)
-        # Skip calculating transition point for hamming when the noise is zero
-        if self.noise_dataset[circuit_index][noise_index] == 0:
-            transition_hamming_std_idx = 0
+        fig, ax = plt.subplots(figsize=(12, 8))
+
+        # Display mean Hamming if requested
+        if display_mean:
+            ax.set_ylim(0, self.theoretical_max_Hamming + 0.1)
+            ax.axhline(y=self.theoretical_max_Hamming, color='r', linestyle='--', label='Theoretical Max Hamming Distance')
+            if noise_index != 0:
+                ax.plot(shots_slice, mean_slice, color='b', label='hamming_mean')
         else:
-            transition_hamming_std_idx = detect_change_point(std_slice, shots_slice, method=method)
+            ax.set_ylim(0, 1)
 
-        ax.plot(shots_slice, hellinger_slice, color='r', label='Hellinger Distance')
-        ax.plot(shots_slice, std_slice, color='y', label='Hamming Std Dev')
+        # Plot Hellinger distance and its fit
+        A, _, C = self.poly_hellinger_ABC[circuit_index][noise_index]
+        ax.plot(shots_slice, hellinger_slice, color='c', label='hellinger')
+        hellinger_saturation_idx = np.where(np.abs(hellinger_poly_slice - C) < tolerance * A)[0]
+        ax.plot(shots_slice, hellinger_poly_slice, color='r', label='hellinger_poly')
+        ax.axvline(shots_slice[hellinger_saturation_idx[0]], color='r', linestyle='--', 
+                label=f'Elbow at n={shots_slice[hellinger_saturation_idx[0]]:.0f}')
 
-        ax.axvline(shots_slice[transition_hellinger_idx], color='r', linestyle='--', 
-                label=f'Elbow at n={shots_slice[transition_hellinger_idx]:.0f}')
-        ax.axvline(shots_slice[transition_hamming_std_idx], color='y', linestyle='--', 
-                label=f'Elbow at n={shots_slice[transition_hamming_std_idx]:.0f}')
+        # Plot Hamming std and its fit
+        A, _, C = self.poly_hamming_std_ABC[circuit_index][noise_index]
+        if noise_index != 0:
+            std_saturation_idx = np.where(np.abs(std_poly_slice - C) < tolerance * A)[0]
+            ax.plot(shots_slice, std_slice, color='c', label='hamming_std')
+            ax.plot(shots_slice, std_poly_slice, color='y', label='hamming_std_poly')
+            ax.axvline(shots_slice[std_saturation_idx[0]], color='y', linestyle='--', 
+                    label=f'Elbow at n={shots_slice[std_saturation_idx[0]]:.0f}')
 
-        ax.set_ylim(0, 1)
 
     def hellinger_dashboard(self, noise_init=0):
         @interact
@@ -333,7 +366,7 @@ class TransitionPointsVisualizer:
         ):
             self.plot_hellinger(int(noise_idx))
 
-    def transition_points_dashboard(self, circuit_init=0, noise_init=0, method='window'):
+    def transition_points_dashboard(self, circuit_init=0, noise_init=0, tolerance=0.01):
         @interact
         def dashboard(
             circuit_idx=Dropdown(
@@ -348,28 +381,62 @@ class TransitionPointsVisualizer:
                 value=noise_init,
                 description='Noise Intensity:',
                 continuous_update=True
-            )
+            ),
+            display_mean=Checkbox(
+                value=True,
+                description='Display Mean Hamming',
+                disabled=False)
         ):
-            self.plot_transition_points(int(circuit_idx), int(noise_idx), method=method)
+            self.plot_transition_points(int(circuit_idx), int(noise_idx), display_mean=display_mean, tolerance=tolerance)
 
-def detect_change_point(h_distances, n_samples, method='window'):
-    # Use log-transformed data for better stability
-    signal = np.log(h_distances)
+def fit_exponential_decay_to_data(x_data, y_data):
     
-    # Choose algorithm based on method
-    if method == 'pelt':
-        algo = rpt.Pelt(model="l2").fit(signal)
-        change_points = algo.predict(pen=10)  # penalty parameter
-    elif method == 'binseg':
-        algo = rpt.Binseg(model="l2").fit(signal)
-        change_points = algo.predict(n_bkps=1)  # look for 1 change point
-    elif method == 'window':
-        algo = rpt.Window(width=8, model="l2").fit(signal)
-        change_points = algo.predict(n_bkps=1)
-    else:  # 'amoc'
-        algo = rpt.KernelCPD(kernel="rbf").fit(signal) #rbf or linear options
-        change_points = algo.predict(n_bkps=1)
-    
-    # Get the first (most significant) change point
-    cp_idx = change_points[0] - 1  # Convert to 0-index
-    return cp_idx
+    # Initial A, B, C guesses
+    C_guess = np.mean(y_data[-5:])  # Estimate offset from last few points
+    A_guess = np.max(y_data) - C_guess  # Amplitude from peak minus offset
+
+    non_zero_mask = y_data - C_guess > 0.01
+    if np.sum(non_zero_mask) > 2:
+        log_y = np.log(y_data[non_zero_mask] - C_guess)
+        x_for_fit = x_data[non_zero_mask]
+        B_guess = -np.polyfit(x_for_fit, log_y, 1)[0]
+    else:
+        B_guess = 0.1  # Default guess
+
+    initial_guess = [A_guess, B_guess, C_guess]
+
+    # Apply Nonlinear Least Squares fitting for A, B, C
+    try:
+        # Basic fit
+        params_opt, params_cov = curve_fit(
+            exp_decay, 
+            x_data, 
+            y_data,
+            p0=initial_guess,
+            maxfev=10000  # Increase max function evaluations
+        )
+        
+        A_fit, B_fit, C_fit = params_opt
+        perr = np.sqrt(np.diag(params_cov))  # Parameter uncertainties
+        
+    except RuntimeError as e:
+        print(f"Optimization failed: {e}")
+        print("Trying with bounds...")
+        
+        # Try with bounds to help convergence
+        params_opt, params_cov = curve_fit(
+            exp_decay,
+            x_data,
+            y_data,
+            p0=initial_guess,
+            bounds=([0, 0, -np.inf], [np.inf, np.inf, np.inf]),  # A,B ≥ 0
+            maxfev=10000
+        )
+        
+        A_fit, B_fit, C_fit = params_opt
+
+    # return predicted values and parameters
+    return A_fit, B_fit, C_fit
+
+def exp_decay(x, A, B, C):
+    return A * np.exp(-B * x) + C

@@ -283,6 +283,16 @@ class TransitionPointsVisualizer:
         self.mean_hamming = [np.mean(hamming_data, axis=0) for hamming_data in hamming_dataset]
         self.std_hamming = [np.std(hamming_data, axis=0) for hamming_data in hamming_dataset]
 
+        # When noise level makes Hamming mean reach 3.5, save index
+        # initialize array with 20
+        self.cutoff_indices = np.array([len(noise_dataset[i]) for i in range(len(self.circuit_names))])
+        for i in range(len(self.circuit_names)):
+            for j in range(len(self.noise_dataset[i])):
+                if self.mean_hamming[i][j, -1] >= 3.5:
+                    self.cutoff_indices[i] = j
+                    break
+        
+
         # Precompute constants to fit Exponential Decay (24, 21, 3)
         self.poly_hellinger_ABC = np.array([
             [fit_exponential_decay_to_data(self.shots_dataset[i], self.hellinger[i][noise_idx, :]) 
@@ -316,6 +326,11 @@ class TransitionPointsVisualizer:
         ax.set_ylim(0, 1)
 
     def plot_transition_points(self, circuit_index = 0, noise_index = 0, display_mean=True, tolerance=0.01):
+        # Do not take into account noise levels beyond cutoff
+        if noise_index >= self.cutoff_indices[circuit_index]:
+            print(f"Warning: Noise index {noise_index} exceeds cutoff index {self.cutoff_indices[circuit_index]} for circuit {self.circuit_names[circuit_index]}. Results may be unreliable.")
+            noise_index = self.cutoff_indices[circuit_index] - 1
+
         shots_slice = self.shots_dataset[circuit_index]
         hellinger_slice = self.hellinger[circuit_index][noise_index, :]
         hellinger_poly_slice = self.poly_hellinger[circuit_index][noise_index, :]
@@ -335,17 +350,18 @@ class TransitionPointsVisualizer:
             ax.set_ylim(0, 1)
 
         # Plot Hellinger distance and its fit
-        A, _, C = self.poly_hellinger_ABC[circuit_index][noise_index]
+        A, B, _ = self.poly_hellinger_ABC[circuit_index][noise_index]
         ax.plot(shots_slice, hellinger_slice, color='c', label='hellinger')
-        hellinger_saturation_idx = np.where(np.abs(hellinger_poly_slice - C) < tolerance * A)[0]
+        # hellinger_saturation_idx = np.where(np.abs(hellinger_poly_slice - C) < tolerance * A)[0]
+        hellinger_saturation_idx = np.where(np.abs(-A * B * np.exp(-B * shots_slice)) < tolerance)[0]
         ax.plot(shots_slice, hellinger_poly_slice, color='r', label='hellinger_poly')
         ax.axvline(shots_slice[hellinger_saturation_idx[0]], color='r', linestyle='--', 
                 label=f'Elbow at n={shots_slice[hellinger_saturation_idx[0]]:.0f}')
 
         # Plot Hamming std and its fit
-        A, _, C = self.poly_hamming_std_ABC[circuit_index][noise_index]
+        A, B, _ = self.poly_hamming_std_ABC[circuit_index][noise_index]
         if noise_index != 0:
-            std_saturation_idx = np.where(np.abs(std_poly_slice - C) < tolerance * A)[0]
+            std_saturation_idx = np.where(np.abs(-A * B * np.exp(-B * shots_slice)) < tolerance)[0]
             ax.plot(shots_slice, std_slice, color='c', label='hamming_std')
             ax.plot(shots_slice, std_poly_slice, color='y', label='hamming_std_poly')
             ax.axvline(shots_slice[std_saturation_idx[0]], color='y', linestyle='--', 

@@ -19,260 +19,25 @@ from ipywidgets import interact, FloatSlider, Checkbox, Dropdown
 # Constants
 SLOPE_THRESHOLD = 0.00015
 
-def calculate_hamming_distance(noisy_counts, true_output, total_shots):
-    """
-    Calculate average Hamming distance between measurements and true output.
-
-    Parameters:
-    noisy_counts: dict, noisy measurement outcomes
-    true_output: str, ideal measurement outcome
-    total_shots: int, total number of shots
-
-    Returns:
-    float: average Hamming distance
-    """
-    total_distance = 0
-
-    for output_string, count in noisy_counts.items():
-        distance = sum(1 for a, b in zip(output_string, true_output) if a != b)
-        total_distance += distance * count
-    
-    return total_distance / total_shots
-
-def calculate_hellinger_distance(noisy_counts, ideal_dist, total_shots, n_qubits):
-    """
-    Calculate Hellinger distance between mesurements and ideal distribution.
-    
-    Parameters:
-    noisy_counts: dict, noisy measurement outcomes
-    ideal_dist: dict, ideal measurement probabilities
-    total_shots: int, total number of shots
-    n_qubits: int, number of qubits
-
-    Returns:
-    float: Hellinger distance
-    """
-
-    # Generate all basis states in ordered manner
-    all_states = binary_vectors = [''.join(bits) for bits in product('01', repeat=n_qubits)]
-
-    # Noisy distribution as array
-    p = np.array([noisy_counts.get(state, 0) / total_shots for state in all_states])
-
-    # Ideal distribution as array
-    q = np.array([ideal_dist.get(state, 0.0) for state in all_states])
-
-    return np.sqrt(1 - np.sum(np.sqrt(p * q)))
-
-def get_ideal_dist(qc: QuantumCircuit):
-    # Use the statevector simulator to get the ideal statevector
-    simulator = AerSimulator(method='statevector')
-    compiled_circuit = transpile(qc, simulator)
-    statevector = Statevector(compiled_circuit)
-
-    # Calculate probabilities from the statevector
-    probabilities = np.abs(statevector)**2
-
-    # Generate basis state labels (e.g., '00', '01', '10', '11')
-    num_qubits = qc.num_qubits
-    basis_states = [format(i, '0'+str(num_qubits)+'b') for i in range(2**num_qubits)]
-
-    # Create the dictionary: {basis_state: probability}
-    ideal_distribution = dict(zip(basis_states, probabilities))
-
-    return ideal_distribution
-
-def create_noise_model(gate_error=0.01, measurement_error=0.01):
-    """
-    Create a noise model with depolarizing and measurement errors
-    Parameters:
-    gate_error: float, depolarizing error rate for gates
-    measurement_error: float, depolarizing error rate for measurements
-    Returns:
-    NoiseModel: Qiskit noise model
-    """
-    noise_model = NoiseModel()
-    
-    # Apply to comprehensive list of gates
-    all_single_qubit_gates = [
-        # Pauli gates
-        'x', 'y', 'z', 'id',
-        # Clifford gates
-        'h', 's', 'sdg', 't', 'tdg', 'sx', 'sxdg',
-        # Rotation gates
-        'rx', 'ry', 'rz', 'p', 'u1', 'u2', 'u3', 'u'
-    ]
-    
-    all_two_qubit_gates = [
-        'cx', 'cy', 'cz', 'cp', 'crx', 'cry', 'crz',
-        'cu1', 'cu2', 'cu3', 'swap', 'iswap', 'dcx',
-        'ecr', 'rxx', 'ryy', 'rzz'
-    ]
-
-    # Add depolarizing error to single-qubit gates
-    single_qubit_error = depolarizing_error(gate_error, 1)
-    noise_model.add_all_qubit_quantum_error(single_qubit_error, all_single_qubit_gates)
-
-    # Add depolarizing error to two-qubit gates
-    two_qubit_error = depolarizing_error(gate_error, 2)
-    noise_model.add_all_qubit_quantum_error(two_qubit_error, all_two_qubit_gates)
-
-    # Add measurement error
-    measurement_error_model = depolarizing_error(measurement_error, 1)
-    noise_model.add_all_qubit_quantum_error(measurement_error_model, 'measure')
-    
-    return noise_model
-
-def simulate_with_noise_3D(circuit, ideal_output, noise_levels = np.linspace(0, 0.3, 101), shot_counts = range(100, 10001, 100), distance_type='hamming'):
-
-    """
-    Simulate noisy circuit and compute average Hamming distance vs shots vs noise level
-    1. circuit: list of [QuantumCircuit, num_qubits]
-    2. ideal_output: expected ideal output of the circuit (either distribution or a basis state)
-    3. noise_levels: list of noise levels to simulate, default: 100 levels from [0, 0.3]
-    4. shot_counts: list of shot counts to simulate, default: 100 counts from [100, 10000]
-    5. distance_type: type of distance metric to use (e.g., 'hamming')
-    6. Returns: 2D array of distances with shape noise_levels x shot_counts
-    """
-
-    print("Simulating circuit with noise range [{}, {}] and shot counts [{}, {}]".format(noise_levels[0], noise_levels[-1], shot_counts[0], shot_counts[-1]))
-    print("Using distance metric: {}".format(distance_type))
-
-    if distance_type == 'hamming':
-        distance_calc_func = calculate_hamming_distance
-    elif distance_type == 'hellinger':
-        distance_calc_func = partial(calculate_hellinger_distance, n_qubits=circuit.num_qubits)  
-    else:
-        raise ValueError("Unsupported distance type. Use 'hamming' or 'hellinger'.")  
-
-    # Create noise models for each noise level
-    noise_models = []
-    for level in noise_levels:
-        noise_model = create_noise_model(gate_error=level, measurement_error=level)
-        noise_models.append(noise_model)
-
-    H = np.zeros((len(noise_models), len(shot_counts)))
-
-    for i, noise_model in enumerate(noise_models):
-
-        simulator = AerSimulator(noise_model=noise_model)
-        transpiled_circ = transpile(circuit, simulator, optimization_level=0)
-
-        for j, shots in enumerate(shot_counts):
-            # Execute simulation
-            job = simulator.run(transpiled_circ, shots=shots)
-            result = job.result()
-            counts = result.get_counts()
-
-            # Calculate distance
-            H[i, j] = distance_calc_func(counts, ideal_output, shots)
-
-    return H
-
-def plot_3d(distance_data, noise_levels, shot_counts):
-    """Plot 3D surface of distance data vs noise levels and shot counts"""
-
-    X, Y = np.meshgrid(shot_counts, noise_levels)
-    Z = distance_data
-
-    fig = plt.figure(figsize=(12, 8))
-    ax = fig.add_subplot(111, projection='3d')
-
-    surf = ax.plot_surface(X, Y, Z, cmap='viridis', edgecolor='none')
-    ax.set_xlabel('Number of Shots')
-    ax.set_ylabel('Noise Level')
-    ax.set_zlabel('Hamming Distance')
-    ax.set_title('Hamming Distance vs Noise Level and Number of Shots')
-
-    fig.colorbar(surf, shrink=0.5, aspect=5)
-
-    plt.show()
-
-class DistanceVisualizer:
-    def __init__(self, shots_array, noise_intensities, circuit_name, hamming_data, hellinger_data, n_qubits):
-        self.shots_array = shots_array
-        self.noise_intensities = noise_intensities
-        self.circuit_name = circuit_name
-        self.theoretical_max_Hamming = n_qubits / 2
-
-        # Hamming data is of the format (experiments, noise_levels, shot_counts)
-        self.hamming_data = hamming_data
-
-        # Hellinger data to compare with the hamming data
-        self.hellinger_data = hellinger_data
-
-        # Precompute statistics mean and std across experiments for each noise level and shot count
-        self.mean_hamming = np.mean(self.hamming_data, axis=0)
-        self.std_hamming = np.std(self.hamming_data, axis=0)
-
-    def plot_interactive(self, noise_index):
-        hellinger_slice = self.hellinger_data[noise_index, :]
-        hamming_mean_slice = self.mean_hamming[noise_index, :]
-        hamming_std_slice = self.std_hamming[noise_index, :]
-
-        fig, ax = plt.subplots(figsize=(12, 7))
-
-        # Display std centered around mean
-        ax.fill_between(self.shots_array, 
-                        hamming_mean_slice - hamming_std_slice, 
-                        hamming_mean_slice + hamming_std_slice, 
-                        color='gray', alpha=0.3, label='Mean ± Std Dev')
-
-        # Smooth the Hellinger, Hamming, Std curves using Savitzky-Golay filter
-        hellinger_slice_smooth = savgol_filter(hellinger_slice, 11, 3)
-        hamming_slice_smooth = savgol_filter(hamming_mean_slice, 11, 3)
-        std_slice_smooth = savgol_filter(hamming_std_slice, 11, 3)
-
-        # Display Hellinger distance
-        ax.plot(self.shots_array, hellinger_slice_smooth, color='r')
-
-        # Display chosen Hamming run 
-        ax.plot(self.shots_array, hamming_slice_smooth, color='b')
-
-        # Display Hellinger std
-        ax.plot(self.shots_array, std_slice_smooth, color='y')
-
-        # Display y up to theoretical max Hamming distance
-        ax.set_ylim(0, self.theoretical_max_Hamming + 0.1)
-
-        # Plot legend: Hellinger is red, Hamming is blue, std is yellow
-        ax.plot([], [], color='r', label='Hellinger Distance')
-        ax.plot([], [], color='b', label='Hamming mean Distance')
-        ax.plot([], [], color='y', label='Std Dev')
-        ax.legend()
-
-        # Labels and title
-        ax.set_xlabel('Number of Shots', fontsize=12)
-        actual_noise = self.noise_intensities[noise_index]
-        ax.set_title(f'{self.circuit_name}\nNoise Intensity: {actual_noise:.4f}', fontsize=14)
-        ax.grid(True, alpha=0.3)
-
-        # Plot theoretical max Hamming distance
-        ax.axhline(y=self.theoretical_max_Hamming, color='r', linestyle='--', label='Theoretical Max Hamming Distance')
-        ax.legend()
-
-        plt.tight_layout()
-        plt.show()
-        
-    def create_dashboard(self, init_value=None):
-        """Create a comprehensive interactive dashboard"""
-        @interact
-        def dashboard(
-            noise_intensity=FloatSlider(
-                min=min(self.noise_intensities),
-                max=max(self.noise_intensities),
-                step=(max(self.noise_intensities)-min(self.noise_intensities))/len(self.noise_intensities),
-                value=init_value if init_value is not None else np.median(self.noise_intensities),
-                description='Noise Intensity:',
-                continuous_update=True
-            )
-        ):
-            noise_idx = np.argmin(np.abs(self.noise_intensities - noise_intensity))
-            self.plot_interactive(noise_idx)
-
 class TransitionPointsVisualizer:
     def __init__(self, names_dataset, shots_dataset, noise_dataset, hamming_dataset, hellinger_dataset, n_qubits):
+        
+        #--- Here we store the precomputed saturation points for all circuits and noise levels for specified slope range
+        self.poly_hellinger_ABC = None
+        self.poly_hamming_std_ABC = None
+        self.poly_hellinger = None
+        self.poly_hamming_std = None
+
+        self.hellinger_saturation_points = None
+        self.hamming_saturation_points = None
+
+        # --- For predicting Hellinger saturation points based on Hamming saturation points using general ratios
+        self.predicted_hellinger_ABC = None
+        self.predicted_hellinger = None
+
         self.predicted_hellinger_saturation_points = None
+
+        # --- Load dataset into the visualizer
         self.circuit_names = names_dataset
         self.shots_dataset = shots_dataset
         self.noise_dataset = noise_dataset
@@ -293,7 +58,6 @@ class TransitionPointsVisualizer:
                 if self.mean_hamming[i][j, -1] >= 3.0:
                     self.cutoff_indices[i] = j
                     break
-        
 
         #--- Precompute constants for Exponential Decay (24, 21, 3)
         self.poly_hellinger_ABC = np.array([
@@ -304,6 +68,15 @@ class TransitionPointsVisualizer:
         self.poly_hamming_std_ABC = np.array([
             [fit_exponential_decay_to_data(self.shots_dataset[i], self.std_hamming[i][noise_idx, :]) 
              for noise_idx in range(self.std_hamming[i].shape[0])]
+            for i in range(len(self.circuit_names))
+        ])
+        # m_A, m_B, m_C = 1.63, 0.27, 12  # Tuned ratios
+        m_A, m_B, m_C = 1.8007, 0.2767, 9.5682  # Ratios extracted from the mean of the data
+        self.predicted_hellinger_ABC = np.array([
+            [(m_A * self.poly_hamming_std_ABC[i][noise_idx][0], 
+              m_B * self.poly_hamming_std_ABC[i][noise_idx][1], 
+              m_C * self.poly_hamming_std_ABC[i][noise_idx][2]) 
+             for noise_idx in range(self.hellinger[i].shape[0])]
             for i in range(len(self.circuit_names))
         ])
 
@@ -318,8 +91,12 @@ class TransitionPointsVisualizer:
              for noise_idx in range(self.std_hamming[i].shape[0])]
             for i in range(len(self.circuit_names))
         ])
+        self.predicted_hellinger = np.array([
+            [exp_decay(self.shots_dataset[i], *self.predicted_hellinger_ABC[i][noise_idx]) 
+             for noise_idx in range(self.hellinger[i].shape[0])]
+            for i in range(len(self.circuit_names))
+        ])
         
-
     def plot_saturation_points(self, circuit_index = 0, noise_index = 0, slope_threshold = SLOPE_THRESHOLD, display_mean=True):
         #--- Don't display if Hamming > 3.0
         if noise_index >= self.cutoff_indices[circuit_index]:
@@ -358,35 +135,41 @@ class TransitionPointsVisualizer:
         point_idx = np.where(np.abs(-A * B * np.exp(-B * self.shots_dataset[circuit_index])) < slope_threshold)[0]
         ax.axvline(shots_slice[point_idx[0]], color='y', linestyle='--')
 
-        #--- Plot predicted Hellinger(if available) point and region around it
-        if self.predicted_hellinger_saturation_points is not None:
-            predicted_point = self.predicted_hellinger_saturation_points[circuit_index][noise_index]
-            ax.axvline(predicted_point[0], color='g', linestyle='--', label='predicted_hellinger')
-
-            # Shade region around predicted point
-            ax.fill_betweenx(
-                y=[0, self.theoretical_max_Hamming + 0.1],
-                x1=predicted_point[0] - 50,
-                x2=predicted_point[0] + 50,
-                color='g',
-                alpha=0.2,
-                label='Predicted Region ±50 shots'
-            )
+        #--- Plot predicted Hellinger exponential decay and saturation point (based on the Hamming fit)
+        predicted_hellinger_slice = self.predicted_hellinger[circuit_index][noise_index, :]
+        ax.plot(shots_slice, predicted_hellinger_slice, color='gray', label='predicted_hellinger_poly')
+        A, B, _ = self.predicted_hellinger_ABC[circuit_index][noise_index]
+        point_idx = np.where(np.abs(-A * B * np.exp(-B * self.shots_dataset[circuit_index])) < slope_threshold)[0]
+    
+        # shade a region around the predicted Hellinger saturation point
+        ax.axvline(shots_slice[point_idx[0]], color='gray', linestyle='--')
+        ax.fill_betweenx(
+            y=[0, self.theoretical_max_Hamming + 0.1],
+            x1=shots_slice[point_idx[0]] - 50,
+            x2=shots_slice[point_idx[0]] + 50,
+            color='gray',
+            alpha=0.2,
+            label='Predicted Region ±50 shots'
+        )
 
         fig.canvas.draw_idle()
 
     def pre_compute_saturation_points(self):
+
         #--- Precompute saturation points for all circuits and noise levels for specified slope range
         self.hellinger_saturation_points = []
         self.hamming_saturation_points = []
+        self.predicted_hellinger_saturation_points = []
 
         for circuit_idx in range(len(self.circuit_names)):
             hellinger_points_circuit = []
             hamming_points_circuit = []
+            predicted_hellinger_points_circuit = []
 
             for noise_idx in range(self.noise_dataset[circuit_idx].shape[0]):
                 hellinger_points_noise = []
                 hamming_points_noise = []
+                predicted_hellinger_points_noise = []
 
                 for slope in np.arange(0.00012, 0.00120, 0.00003):
                     # Hellinger saturation point
@@ -399,14 +182,22 @@ class TransitionPointsVisualizer:
                     point_idx = np.where(np.abs(-A * B * np.exp(-B * self.shots_dataset[circuit_idx])) < slope)[0]
                     hamming_points_noise.append((point_idx[0], self.shots_dataset[circuit_idx][point_idx[0]]))
 
+                    # Predicted Hellinger saturation point
+                    A, B, _ = self.predicted_hellinger_ABC[circuit_idx][noise_idx]
+                    point_idx = np.where(np.abs(-A * B * np.exp(-B * self.shots_dataset[circuit_idx])) < slope)[0]
+                    predicted_hellinger_points_noise.append((point_idx[0], self.shots_dataset[circuit_idx][point_idx[0]]))
+
                 hellinger_points_circuit.append(hellinger_points_noise)
                 hamming_points_circuit.append(hamming_points_noise)
+                predicted_hellinger_points_circuit.append(predicted_hellinger_points_noise)
 
             self.hellinger_saturation_points.append(hellinger_points_circuit)
             self.hamming_saturation_points.append(hamming_points_circuit)
+            self.predicted_hellinger_saturation_points.append(predicted_hellinger_points_circuit)
 
         self.hellinger_saturation_points = np.array(self.hellinger_saturation_points)
         self.hamming_saturation_points = np.array(self.hamming_saturation_points)
+        self.predicted_hellinger_saturation_points = np.array(self.predicted_hellinger_saturation_points)
 
         #--- Precompute correlation between Hellinger and Hamming saturation points and fit linear regression
         self.saturation_correlation_params = []
@@ -423,16 +214,6 @@ class TransitionPointsVisualizer:
 
         self.saturation_correlation_params = np.array(self.saturation_correlation_params)
 
-        #--- Predict region of Hellinger points based on Hamming saturation points
-        self.predicted_hellinger_saturation_points = []
-        for circuit_idx in range(len(self.circuit_names)):
-            predicted_points_circuit = []
-            for noise_idx in range(self.noise_dataset[circuit_idx].shape[0]):
-                m, b = self.saturation_correlation_params[circuit_idx][noise_idx]
-                hamming_points = np.array(self.hamming_saturation_points[circuit_idx][noise_idx])
-                predicted_points = (hamming_points[:, 1] - b) / m
-                predicted_points_circuit.append(predicted_points)
-            self.predicted_hellinger_saturation_points.append(predicted_points_circuit)
 
     def plot_saturation_points_correlation(self, circuit_index = 0, noise_idx = 0):
         hellinger_points = np.array(self.hellinger_saturation_points[circuit_index][noise_idx])
@@ -463,17 +244,23 @@ class TransitionPointsVisualizer:
         plt.show()
 
     # Plot a bell curve for A_Hellinger/ A_Hamming, B_Hellinger/ B_Hamming, C_Hellinger/ C_Hamming on 3 different plots
-    def plot_ABC_correlations(self):
+    def plot_ABC_correlations(self, circuit_indeces = [0], noise_index=None, display_bell_curve_fit=False, skip_circuit_noise_combinations=[]):
+
         parameters = ['A', 'B', 'C']
         fig, axs = plt.subplots(1, 3, figsize=(18, 5))
 
         for i, param in enumerate(parameters):
             ratios = []
-            for circuit_idx in range(len(self.circuit_names)):
-                for noise_idx in range(self.noise_dataset[circuit_idx].shape[0]):
+            for circuit_idx in circuit_indeces:
+
+                noise_indices = range(self.cutoff_indices[circuit_idx])
+                if noise_index is not None:
+                    noise_indices = [noise_index]
+
+                for noise_idx in noise_indices:
                     hellinger_param = self.poly_hellinger_ABC[circuit_idx][noise_idx][i]
                     hamming_param = self.poly_hamming_std_ABC[circuit_idx][noise_idx][i]
-                    if hamming_param != 0:
+                    if hamming_param != 0 and (circuit_idx, noise_idx) not in skip_circuit_noise_combinations:
                         ratios.append(hellinger_param / hamming_param)
 
             axs[i].hist(ratios, bins=80, color='b', alpha=0.7, edgecolor='black')
@@ -481,6 +268,15 @@ class TransitionPointsVisualizer:
             axs[i].set_xlabel('Ratio Value')
             axs[i].set_ylabel('Frequency')
             axs[i].grid(True, alpha=0.3)
+
+            # --- Fit a bell curve to the histogram and display mean and std
+            if display_bell_curve_fit and len(ratios) > 1:
+                mean = np.mean(ratios)
+                std = np.std(ratios)
+                x_fit = np.linspace(min(ratios), max(ratios), 100)
+                y_fit = (1 / (std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_fit - mean) / std) ** 2)
+                axs[i].plot(x_fit, y_fit * len(ratios) * (max(ratios) - min(ratios)) / 80, color='r', label=f'Fit: μ={mean:.4f}, σ={std:.4f}')
+                axs[i].legend()
 
         plt.tight_layout()
         plt.show()
@@ -560,9 +356,18 @@ class TransitionPointsVisualizer:
         )
         def dashboard(circuit_idx, noise_idx):
             self.plot_saturation_points_correlation(int(circuit_idx), int(noise_idx))
+    
+    def update_hamming_std_fit(self, new_ABC):
+        self.poly_hamming_std_ABC = new_ABC
+
+        self.poly_hamming_std = np.array([
+            [exp_decay(self.shots_dataset[i], *self.poly_hamming_std_ABC[i][noise_idx]) 
+             for noise_idx in range(self.std_hamming[i].shape[0])]
+            for i in range(len(self.circuit_names))
+        ])
 
 def fit_exponential_decay_to_data(x_data, y_data):
-    
+
     # Initial A, B, C guesses
     C_guess = np.mean(y_data[-5:])  # Estimate offset from last few points
     A_guess = np.max(y_data) - C_guess  # Amplitude from peak minus offset

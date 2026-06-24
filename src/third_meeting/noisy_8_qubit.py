@@ -86,13 +86,6 @@ def generate_half_circuits():
         )
         halves.append(half)
 
-    # Circuit 24: H gates on all qubits
-    names.append("Hadamard")
-    half = QuantumCircuit(8, 8)
-    for qubit in range(8):
-        half.h(qubit)
-    halves.append(half)
-
     return names, halves
 
 def generate_true_circuits(initial_state=None, halves=None):

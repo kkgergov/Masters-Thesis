@@ -122,35 +122,41 @@ class TransitionPointsVisualizer:
             ax.set_ylim(0, 1)
 
         #--- Plot Hellinger distance and its fit and saturation point
-        ax.plot(shots_slice, hellinger_slice, color='c', label='hellinger')
+        #ax.plot(shots_slice, hellinger_slice, color='c', label='hellinger')
         ax.plot(shots_slice, hellinger_poly_slice, color='r', label='hellinger_poly')
         A, B, _ = self.poly_hellinger_ABC[circuit_index][noise_index]
         point_idx = np.where(np.abs(-A * B * np.exp(-B * self.shots_dataset[circuit_index])) < slope_threshold)[0]
         ax.axvline(shots_slice[point_idx[0]], color='r', linestyle='--')
 
         #--- Plot Hamming std and its fit and saturation point
-        ax.plot(shots_slice, std_slice, color='c', label='hamming_std')
+        #ax.plot(shots_slice, std_slice, color='c', label='hamming_std')
         ax.plot(shots_slice, std_poly_slice, color='y', label='hamming_std_poly')
         A, B, _ = self.poly_hamming_std_ABC[circuit_index][noise_index]
         point_idx = np.where(np.abs(-A * B * np.exp(-B * self.shots_dataset[circuit_index])) < slope_threshold)[0]
         ax.axvline(shots_slice[point_idx[0]], color='y', linestyle='--')
 
-        #--- Plot predicted Hellinger exponential decay and saturation point (based on the Hamming fit)
-        predicted_hellinger_slice = self.predicted_hellinger[circuit_index][noise_index, :]
-        ax.plot(shots_slice, predicted_hellinger_slice, color='gray', label='predicted_hellinger_poly')
-        A, B, _ = self.predicted_hellinger_ABC[circuit_index][noise_index]
-        point_idx = np.where(np.abs(-A * B * np.exp(-B * self.shots_dataset[circuit_index])) < slope_threshold)[0]
+        # #--- Plot predicted Hellinger exponential decay and saturation point (based on the Hamming fit)
+        # predicted_hellinger_slice = self.predicted_hellinger[circuit_index][noise_index, :]
+        # ax.plot(shots_slice, predicted_hellinger_slice, color='gray', label='predicted_hellinger_poly')
+        # A, B, _ = self.predicted_hellinger_ABC[circuit_index][noise_index]
+        # point_idx = np.where(np.abs(-A * B * np.exp(-B * self.shots_dataset[circuit_index])) < slope_threshold)[0]
     
-        # shade a region around the predicted Hellinger saturation point
-        ax.axvline(shots_slice[point_idx[0]], color='gray', linestyle='--')
-        ax.fill_betweenx(
-            y=[0, self.theoretical_max_Hamming + 0.1],
-            x1=shots_slice[point_idx[0]] - 50,
-            x2=shots_slice[point_idx[0]] + 50,
-            color='gray',
-            alpha=0.2,
-            label='Predicted Region ±50 shots'
-        )
+        # # shade a region around the predicted Hellinger saturation point
+        # ax.axvline(shots_slice[point_idx[0]], color='gray', linestyle='--')
+        # ax.fill_betweenx(
+        #     y=[0, self.theoretical_max_Hamming + 0.1],
+        #     x1=shots_slice[point_idx[0]] - 50,
+        #     x2=shots_slice[point_idx[0]] + 50,
+        #     color='gray',
+        #     alpha=0.2,
+        #     label='Predicted Region ±50 shots'
+        # )
+
+        #--- Display legend and labels
+        ax.set_xlabel('Number of Shots')
+        ax.set_ylabel('Hellinger distance')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
 
         fig.canvas.draw_idle()
 

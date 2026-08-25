@@ -36,6 +36,7 @@ def generate_half_circuits():
     # Circuits 1-12: Variational circuits with different entanglements and reps
     entanglements = ['linear', 'circular', 'full']
     reps_list = [2, 4, 8, 20]
+    #reps_list = [3, 7, 9, 12]
 
     for entanglement in entanglements:
         for reps in reps_list:
@@ -57,6 +58,7 @@ def generate_half_circuits():
     # Circuits 13-18: Real Amplitudes circuits with different entanglements and reps
     entanglements = ['linear', 'circular']
     reps_list = [2, 4, 8]
+    #reps_list = [3, 7, 12]
 
     for entanglement in entanglements:
         for reps in reps_list:

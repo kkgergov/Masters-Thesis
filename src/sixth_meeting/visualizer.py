@@ -55,21 +55,21 @@ class TransitionPointsVisualizer:
         ax.set_ylim(0, 1)
 
         #--- Plot Hamming std and its fit and saturation point
-        ax.plot(shots_slice, hamming_std_slice, color='c', label='hamming_std_actual')
-        ax.plot(shots_slice, poly_hamming_std_slice, color='y', label='hamming_std_poly')
+        # ax.plot(shots_slice, hamming_std_slice, color='c', label='hamming_std_actual')
+        # ax.plot(shots_slice, poly_hamming_std_slice, color='y', label='hamming_std_poly')
 
         #--- Plot Hellinger distance and its fit and saturation point
-        ax.plot(shots_slice, hellinger_slice, color='c', label='hellinger_actual')
-        ax.plot(shots_slice, poly_hellinger_slice, color='r', label='hellinger_poly')
-        ax.axvline(shots_slice[self.hellinger_saturation_points[circuit_index][noise_index][slope_index]], color='r', linestyle='--')
+        #ax.plot(shots_slice, hellinger_slice, color='c', label='Smoothed Hellinger values')
+        ax.plot(shots_slice, poly_hellinger_slice, color='r', label='Hellinger polynomial fit')
+        ax.axvline(shots_slice[self.hellinger_saturation_points[circuit_index][noise_index][slope_index]], color='r', linestyle='--', label='Hellinger saturation point')
 
-        # #--- Plot predicted Hellinger exponential decay and saturation point (based on the Hamming fit)
-        ax.plot(shots_slice, poly_predicted_hellinger_slice, color='b', label='hellinger_predicted_poly')
-        ax.axvline(shots_slice[self.predicted_hellinger_saturation_points[circuit_index][noise_index][slope_index]], color='b', linestyle='--')
+        #--- Plot predicted Hellinger exponential decay and saturation point (based on the Hamming fit)
+        ax.plot(shots_slice, poly_predicted_hellinger_slice, color='b', label='Hellinger predicted polynomial fit')
+        ax.axvline(shots_slice[self.predicted_hellinger_saturation_points[circuit_index][noise_index][slope_index]], color='b', linestyle='--', label='Hellinger predicted saturation point')
 
         #--- Display legend and labels
         ax.set_xlabel('Number of Shots')
-        ax.set_ylabel('Distance / Std')
+        ax.set_ylabel('Hellinger distance')
         ax.legend()
         ax.grid(True, alpha=0.3)
 
